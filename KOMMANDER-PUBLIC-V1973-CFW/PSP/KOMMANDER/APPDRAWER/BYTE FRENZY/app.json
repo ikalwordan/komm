@@ -1,9 +1,0 @@
-{
-  "name": "BYTE FRENZY",
-  "entry": "main.kap",
-  "display": "fullscreen",
-  "icon": "icon.png",
-  "kind": "GAME",
-  "desc": "Eat smaller, outgrow the rest: four data-ocean zones, a PING FLOOD bonus and the ANTIVIRUS boss.",
-  "author": "KOMMANDO"
-}

@@ -1,8 +1,0 @@
-{
-  "name": "Tank Battle",
-  "display": "fullscreen",
-  "icon": "icon.png",
-  "kind": "2D",
-  "desc": "Hold fire, lock your turret and defend a three-hit base.",
-  "author": "KOMMANDO"
-}
