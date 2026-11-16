@@ -1,0 +1,8 @@
+{
+  "name": "Tetris",
+  "display": "fullscreen",
+  "icon": "icon.png",
+  "kind": "2D",
+  "desc": "Guideline rotation, hold piece.",
+  "author": "KOMMANDO"
+}

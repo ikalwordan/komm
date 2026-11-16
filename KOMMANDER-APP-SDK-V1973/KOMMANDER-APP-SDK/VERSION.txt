@@ -1,0 +1,3 @@
+KOMMANDER APP SDK for shell V1973
+Lua SDK 1.23
+KAP ABI 1

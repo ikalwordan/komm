@@ -1,0 +1,747 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KOMMANDER LUA — App Simulator</title>
+<link rel="stylesheet" href="vendor/codemirror/codemirror.min.css">
+<link rel="stylesheet" href="vendor/codemirror/show-hint.min.css">
+<style>
+  :root {
+    --red:#ff2a2a; --dim:#7a3535;
+    --bg:#141414; --panel:#1b1b1b; --panel2:#121212; --line:#2b2b2b;
+    --txt:#d8d8d8; --grey:#7e7e7e; --barbg:#101010;
+    --leftw:746px; --glow:0 16px 44px -22px var(--red); --sbtrack:#0d0d0d;
+  }
+  * { box-sizing:border-box; border-radius:0 !important; }
+  html,body { margin:0; }
+  body {
+    background:var(--bg);
+    color:var(--txt); font:13px/1.55 ui-monospace,Menlo,Consolas,monospace;
+  }
+  body.light {
+    --bg:#e7e7e7; --panel:#f4f4f4; --panel2:#fbfbfb; --line:#d0d0d0;
+    --txt:#1b1b1b; --grey:#5f5f5f; --barbg:#ededed; --sbtrack:#dcdcdc;
+    background:var(--bg);
+  }
+  body.light button, body.light select, body.light input[type=text] { background:#e8e8e8; color:#1b1b1b; border-color:#c8c8c8; }
+  body.light #drop { color:#5f5f5f; }
+  a { color:var(--red); }
+  code { color:var(--red); }
+  ::-webkit-scrollbar { width:12px; height:12px; }
+  ::-webkit-scrollbar-track { background:var(--sbtrack); }
+  ::-webkit-scrollbar-thumb { background:var(--red); border:2px solid var(--sbtrack); }
+  ::-webkit-scrollbar-thumb:hover { background:var(--red); filter:brightness(1.25); }
+  * { scrollbar-color:var(--red) var(--sbtrack); scrollbar-width:thin; }
+
+  /* ---- top status bar ---- */
+  .statusbar { display:flex; align-items:center; gap:8px; height:32px; padding:0 14px; background:var(--barbg); border-bottom:1px solid var(--dim); letter-spacing:1px; font-size:13px; position:sticky; top:0; z-index:65; }
+  .statusbar .bk { color:var(--red); font-weight:bold; }
+  .statusbar .sh { color:#c9c9c9; margin-left:7px; font-weight:bold; text-shadow:0 0 6px rgba(255,42,42,0.22); }
+  body.light .statusbar .sh { color:#2a2a2a; text-shadow:none; }
+  .statusbar .div { color:#3a3a3a; margin:0 6px; }
+  .statusbar .ttl { color:var(--grey); }
+  .statusbar #runtitle { color:var(--grey); max-width:34vw; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .statusbar #runtitle.ok { color:var(--red); } .statusbar #runtitle.err { color:#ffce4d; }
+  .statusbar .right { margin-left:auto; display:flex; align-items:center; gap:12px; color:var(--grey); }
+  .statusbar .dot { width:7px; height:7px; background:var(--red); box-shadow:0 0 7px var(--red); display:inline-block; }
+  .statusbar #clock { color:var(--txt); }
+  .statusbar .gear { cursor:pointer; color:var(--grey); font-size:19px; line-height:1; }
+  .statusbar .gear:hover { color:var(--red); }
+
+  .wrap { max-width:1480px; margin:0 auto; padding:14px 18px 22px; }
+  .grid { display:grid; grid-template-columns:var(--leftw) minmax(340px,1fr); column-gap:18px; row-gap:16px; align-items:start; }
+  .grid > .stage, .grid > .editor { align-self:stretch; }
+  @media (max-width:1180px){
+    .grid { grid-template-columns:1fr; }
+    :root { --leftw:auto; }
+    .stage { max-width:840px; margin:0 auto; width:100%; }
+    body.fullprev .stage { max-width:none; }
+  }
+
+  /* ---- preview (edge to edge) ---- */
+  .stage { background:#000; border:1px solid var(--line); box-shadow:var(--glow); padding:0; overflow:hidden; }
+  .stage canvas { width:100%; height:auto; display:block; image-rendering:pixelated; image-rendering:crisp-edges; background:#000; }
+
+  /* ---- editor column ---- */
+  .editor { display:flex; flex-direction:column; min-width:320px; height:100%; }
+  .ed-head { display:flex; align-items:center; gap:10px; background:#161616; border:1px solid var(--line); border-bottom:0; padding:8px 12px; }
+  body.light .ed-head { background:#ececec; }
+  .ed-head h3 { margin:0; color:var(--red); font-size:12px; letter-spacing:1px; }
+  .ed-head .chip { color:var(--red); font-size:11px; border:1px solid var(--dim); padding:1px 6px; }
+  .ed-head .live { margin-left:auto; color:var(--grey); font-size:11px; display:flex; align-items:center; gap:7px; cursor:pointer; user-select:none; }
+  .dot { width:8px; height:8px; background:#3a6; box-shadow:0 0 6px #3a6; } .dot.off { background:#666; box-shadow:none; }
+  .cmslot { flex:1 1 auto; min-height:280px; position:relative; }
+  .cmslot .CodeMirror { position:absolute; inset:0; height:100%; border:1px solid var(--line); }
+  .CodeMirror { font:13px/1.5 ui-monospace,Consolas,monospace; }
+  .toolbar { display:flex; gap:7px; flex-wrap:wrap; margin-top:8px; align-items:center; }
+  .toolbar button { padding:5px 9px; font-size:12px; }
+  /* editor actions: stretch to fill the row, wrap into a clean grid when squished */
+  .editor > .toolbar { display:grid; grid-template-columns:repeat(auto-fit, minmax(90px, 1fr)); gap:7px; align-items:stretch; }
+  .editor > .toolbar button { width:100%; padding:7px 6px; white-space:nowrap; }
+
+  .rowdiv { grid-column:1/-1; height:0; border-top:1px solid var(--line); box-shadow:0 1px 0 rgba(255,42,42,0.10); margin:6px 0 2px; }
+
+  button, select, input[type=text] { font:inherit; background:#202020; color:#eee; border:1px solid #383838; padding:7px 11px; cursor:pointer; }
+  button:hover, select:hover { border-color:var(--red); }
+  button.primary { background:var(--red); color:#190000; border-color:var(--red); font-weight:bold; }
+  button.primary:hover { filter:brightness(1.1); }
+  button:disabled { opacity:.4; cursor:default; border-color:#383838; }
+
+  .col { display:flex; flex-direction:column; gap:16px; }
+  .panel { background:var(--panel); border:1px solid var(--line); padding:13px 15px; text-align:left; }
+  .panel h3 { margin:-13px -15px 13px; background:#161616; border-bottom:1px solid var(--line); padding:9px 14px; color:var(--red); font-size:12px; letter-spacing:1px; text-align:left; }
+  body.light .panel h3 { background:#ececec; }
+  .panel > *:last-child { margin-bottom:0; }   /* uniform bottom gap = panel padding, regardless of child margins */
+  .panel p, .panel .note { text-align:left; }
+  .panel p { margin:0; }   /* kill the UA <p> margins that left dead space in NOTE/CONTROLS */
+  .note { color:var(--grey); font-size:11px; }
+
+  .applist { max-height:300px; overflow:auto; border:1px solid var(--line); background:var(--panel2); }
+  .applist.short { max-height:170px; }
+  .appitem { display:flex; align-items:center; gap:10px; padding:7px 9px; cursor:pointer; border-bottom:1px solid #232323; }
+  body.light .appitem { border-bottom-color:#e2e2e2; }
+  .appitem:last-child { border-bottom:0; }
+  .appitem:hover { background:#222; } body.light .appitem:hover { background:#ececec; }
+  .appitem.sel { background:#241115; box-shadow:inset 3px 0 0 var(--red); } body.light .appitem.sel { background:#fbe7ea; }
+  .appitem .ico { width:28px; height:28px; background:#000; border:1px solid #2a2a2a; image-rendering:pixelated; flex:0 0 auto; display:flex; align-items:center; justify-content:center; color:var(--red); font-weight:bold; font-size:14px; overflow:hidden; }
+  .appitem .ico img { width:100%; height:100%; image-rendering:pixelated; }
+  .appitem .meta { min-width:0; flex:1; }
+  .appitem .nm { color:var(--txt); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .appitem .nm .star { color:var(--red); }
+  .appitem .tag { color:var(--grey); font-size:10px; letter-spacing:.5px; }
+  .appitem .del { color:#775; padding:2px 6px; font-size:13px; } .appitem .del:hover { color:#ff7676; }
+
+  #drop { border:2px dashed #383838; padding:16px; text-align:center; color:var(--grey); margin-bottom:8px; }
+  #drop.hover { border-color:var(--red); color:var(--txt); }
+
+  .field { margin:8px 0; }
+  .field > label.lbl { display:block; color:var(--grey); font-size:11px; letter-spacing:.5px; margin-bottom:5px; }
+  .segs { display:flex; border:1px solid #383838; overflow:hidden; width:max-content; max-width:100%; }
+  .segs label { padding:6px 13px; cursor:pointer; color:var(--txt); border-right:1px solid #383838; user-select:none; font-size:12px; }
+  .segs label:last-child { border-right:0; }
+  .segs input { display:none; }
+  .segs input:checked + span { color:#190000; }
+  .segs label:has(input:checked) { background:var(--red); }
+  .toggle { display:inline-flex; align-items:center; gap:8px; cursor:pointer; }
+  .swatches { display:flex; gap:7px; flex-wrap:wrap; align-items:center; }
+  .sw { width:24px; height:24px; border:2px solid #2a2a2a; cursor:pointer; } .sw.sel { border-color:#fff; } body.light .sw.sel { border-color:#222; }
+  input[type=color] { width:40px; height:28px; padding:0; border:1px solid #383838; background:none; cursor:pointer; }
+
+  table.keys { border-collapse:collapse; width:100%; }
+  table.keys td { padding:3px 6px; border-bottom:1px solid #232323; } body.light table.keys td { border-bottom-color:#e2e2e2; }
+  table.keys td:first-child { color:var(--red); white-space:nowrap; width:38%; padding-left:14px; }
+
+  /* ---- footer status line ---- */
+  .botbar { display:flex; align-items:center; gap:14px; flex-wrap:wrap; padding:7px 16px; background:var(--barbg); border-top:1px solid var(--dim); margin-top:18px; font-size:11px; letter-spacing:.5px; }
+  .botbar .bk { color:var(--red); font-weight:bold; } .botbar .sh { color:#c9c9c9; font-weight:bold; margin-left:6px; } body.light .botbar .sh { color:#2a2a2a; }
+  .botbar #footTip { color:var(--grey); flex:1; min-width:160px; }
+  .botbar #footTip b { color:var(--red); font-weight:normal; }
+  .botbar .fright { color:var(--grey); }
+
+  /* embedded in KOMMANDER SHELL STUDIO (?embed): hide our own header + footer so the host
+     shell is the only chrome (no duplicate header/footer), and tighten the page. */
+  html.embed .statusbar, html.embed footer.botbar { display:none !important; }
+  html.embed .wrap { padding-top:12px; padding-bottom:12px; }
+
+  /* ---- modal ---- */
+  .modal-bg { position:fixed; inset:0; background:rgba(0,0,0,0.66); display:flex; align-items:center; justify-content:center; z-index:100; }
+  .modal { background:var(--panel); border:1px solid var(--red); box-shadow:0 20px 60px -20px #000; max-width:460px; width:92%; padding:16px 18px; }
+  .modal h3 { margin:-16px -18px 14px; background:#161616; border-bottom:1px solid var(--line); padding:11px 16px; color:var(--red); letter-spacing:1px; font-size:13px; }
+  body.light .modal h3 { background:#ececec; }
+  .modal > *:last-child { margin-bottom:0; }
+  .modal p { margin:0 0 16px; color:var(--txt); }
+  .modal .mbtns { display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; margin-top:6px; }
+
+  /* ---- focus (fullscreen split) editor ---- */
+  #focus-overlay { position:fixed; top:32px; left:0; right:0; bottom:0; background:#0a0a0a; z-index:60; display:flex; flex-direction:column; }
+  body.light #focus-overlay { background:#dedede; }
+  #focus-overlay[hidden] { display:none; }
+  .fbar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:8px 12px; border-top:1px solid var(--dim); background:var(--barbg); }
+  .fbar .fspacer { margin-left:auto; }
+  .fbar button { padding:5px 9px; font-size:12px; }
+  .fmain { flex:1; display:flex; min-height:0; }
+  .fpane { min-width:0; min-height:0; height:100%; }
+  .fprev { display:flex; justify-content:safe center; align-items:safe center; background:#000; overflow:auto; flex:0 0 50%; }
+  .fprev canvas { image-rendering:pixelated; image-rendering:crisp-edges; }
+  .fprev.fit canvas { width:100% !important; height:100% !important; object-fit:contain; }
+  .fsplit { width:6px; cursor:col-resize; background:var(--line); flex:0 0 auto; }
+  .fsplit:hover { background:var(--red); }
+  .fcode { flex:1 1 auto; position:relative; background:#0a0a0a; }
+  .fcode .CodeMirror { position:absolute; inset:0; height:100%; min-height:0; border:0; }
+
+  /* ---- CodeMirror 'kom' theme ---- */
+  .cm-s-kom.CodeMirror { background:#101010; color:#cdcdcd; }
+  body.light .cm-s-kom.CodeMirror { background:#fbfbfb; color:#1b1b1b; }
+  .cm-s-kom .CodeMirror-gutters { background:#0d0d0d; border-right:1px solid var(--line); }
+  body.light .cm-s-kom .CodeMirror-gutters { background:#eee; }
+  .cm-s-kom .CodeMirror-linenumber { color:#4a4a4a; } body.light .cm-s-kom .CodeMirror-linenumber { color:#9a9a9a; }
+  .cm-s-kom .CodeMirror-cursor { border-left:2px solid var(--red); }
+  .cm-s-kom .CodeMirror-selected { background:#332327; } body.light .cm-s-kom .CodeMirror-selected { background:#dfe2ea; }
+  .cm-s-kom .CodeMirror-activeline-background { background:rgba(255,255,255,0.03); } body.light .cm-s-kom .CodeMirror-activeline-background { background:rgba(0,0,0,0.04); }
+  .cm-s-kom .CodeMirror-matchingbracket { color:#fff !important; background:var(--dim); }
+  .CodeMirror-scrollbar-filler, .CodeMirror-gutter-filler { background:transparent !important; }
+  .cm-s-kom .CodeMirror-lines { padding:8px 0; }
+  .cm-s-kom pre.CodeMirror-line, .cm-s-kom pre.CodeMirror-line-like { padding:0 14px 0 8px; }
+  .cm-s-kom .CodeMirror-vscrollbar, .cm-s-kom .CodeMirror-hscrollbar { background:var(--sbtrack); }
+  .cm-s-kom .cm-keyword { color:var(--red); }
+  .cm-s-kom .cm-number { color:#ff8aa8; }
+  .cm-s-kom .cm-string, .cm-s-kom .cm-string-2 { color:#9be29b; }
+  .cm-s-kom .cm-comment { color:#6f6f6f; font-style:italic; }
+  .cm-s-kom .cm-builtin { color:#67d3ff; }
+  .cm-s-kom .cm-variable-2 { color:#e0a3ff; }
+  .cm-s-kom .cm-operator { color:#cdcdcd; } body.light .cm-s-kom .cm-operator { color:#444; }
+  .CodeMirror-hints.kom { background:#161616; border:1px solid var(--red); font:12px ui-monospace,Consolas,monospace; }
+  .CodeMirror-hints.kom .CodeMirror-hint { color:#cdcdcd; }
+  .CodeMirror-hints.kom li.CodeMirror-hint-active { background:var(--red); color:#190000; }
+</style>
+<script>/* set BEFORE <body> renders so the embedded chrome never flashes */
+try { if (new URLSearchParams(location.search).has('embed')) document.documentElement.classList.add('embed'); } catch (e) {}</script>
+</head>
+<body>
+<div class="statusbar">
+  <span><span class="bk">KOMMANDER</span><span class="sh">SHELL</span></span>
+  <span class="div">·</span><span class="ttl">App Simulator</span>
+  <span class="div">·</span><span id="runtitle">Idle</span>
+  <span class="right"><span class="dot"></span> ONLINE <span id="clock">--:--</span><span class="gear" id="settingsBtn" title="Settings">⚙</span></span>
+</div>
+
+<div class="wrap">
+ <div class="grid">
+
+  <div class="stage"><canvas id="screen" width="480" height="272"></canvas></div>
+
+  <div class="editor">
+    <div class="ed-head">
+      <h3>CODE</h3>
+      <span id="dirty" class="chip" hidden>● UNSAVED</span>
+      <label class="live"><span id="livedot" class="dot"></span><input type="checkbox" id="liveChk" checked style="display:none">Live Reload</label>
+    </div>
+    <textarea id="code" spellcheck="false"></textarea>
+    <div class="toolbar">
+      <button id="run" class="primary">▶ RUN</button>
+      <button id="restart">↻ RESTART</button>
+      <button id="save">SAVE</button>
+      <button id="saveAs">SAVE AS…</button>
+      <button id="download">DOWNLOAD</button>
+      <button id="revert" title="Reload the unedited original">ORIGINAL</button>
+      <button id="focus">⛶ FOCUS</button>
+    </div>
+  </div>
+
+  <div class="rowdiv"></div>
+
+  <div class="col">
+    <div class="panel">
+      <h3>LOCAL APPS</h3>
+      <div class="note" style="margin-bottom:8px">Current curated release apps and bundled simulator demos. Click to load into the editor.</div>
+      <div class="applist" id="applist"></div>
+    </div>
+    <div class="panel" id="revpanel" hidden>
+      <h3>MY REVISIONS</h3>
+      <div class="note" style="margin-bottom:8px">Saved edits (kept in this browser). Click to load; × to delete.</div>
+      <div class="applist short" id="revlist"></div>
+    </div>
+    <div class="panel">
+      <h3>YOUR APP</h3>
+      <div id="drop">Drop a <b>.lua</b> file<br>or a <b>bundle folder</b> (main.lua + assets) here</div>
+      <div class="toolbar">
+        <input type="file" id="file" accept=".lua" style="display:none">
+        <input type="file" id="dir" webkitdirectory directory multiple style="display:none">
+        <button id="pickFile">Open Lua File</button>
+        <button id="pickDir">Open Bundle Folder</button>
+      </div>
+      <div class="note" style="margin-top:8px">Loaded code drops into the editor so you can tweak it live.</div>
+    </div>
+    <div class="panel">
+      <h3>NOTE</h3>
+      <p class="note">This tests app logic, layout, input &amp; audio — not PSP RAM/CPU limits or exact timing. An infinite loop in <code>update()</code> will freeze the tab (no watchdog like the PSP). Lua 5.3 engine; near-identical to our 5.4 apps. The final check still belongs on real hardware.</p>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="panel">
+      <h3>DISPLAY</h3>
+      <!-- RENDER MODE is hidden and locked to FULL: the shell has one render
+           mode now (APP_SDK: inset/window in a header or app.json are ignored), so
+           offering three here tested a device behaviour that no longer exists. The
+           radios stay in the DOM, hidden, and the region code in kom.js stays
+           whole -- delete the style below to bring the switch back. -->
+      <div class="field" style="display:none">
+        <label class="lbl">RENDER MODE</label>
+        <div class="segs" id="modeSegs">
+          <label><input type="radio" name="mode" value="full" checked><span>FULL</span></label>
+          <label><input type="radio" name="mode" value="inset"><span>INSET</span></label>
+          <label><input type="radio" name="mode" value="window"><span>WINDOW</span></label>
+        </div>
+        <div class="note" style="margin-top:6px">INSET draws the PSP top bar + tab bar + bottom strip around your app, like on the device. WINDOW dims the backdrop. FULL is chrome-free.</div>
+      </div>
+      <div class="field"><label class="toggle"><input type="checkbox" id="crt"> CRT effect <span class="note">(scanlines · vignette · flicker, like the EBOOT)</span></label></div>
+      <div class="field"><label class="toggle"><input type="checkbox" id="gamepad" checked> Gamepad input</label></div>
+    </div>
+    <div class="panel">
+      <h3>THEME</h3>
+      <div class="field"><label class="lbl">PRESETS</label><div class="swatches" id="swatches"></div></div>
+      <div class="field"><label class="lbl">CUSTOM ACCENT</label><div class="swatches"><input type="color" id="custom" value="#ff2a2a"><span class="note">palette derives from this, exactly like the PSP theme menu</span></div></div>
+    </div>
+    <div class="panel">
+      <h3>CONTROLS</h3>
+      <table class="keys" id="keysTable"></table>
+      <div class="toolbar" style="margin-top:10px">
+        <button id="remapBtn">⌨ REMAP KEYS</button>
+        <button id="remapReset">RESET</button>
+      </div>
+      <p class="note" style="margin-top:9px">Esc = HOME (quit). <b>I / J / K / L = the analog stick</b> (a gamepad's left stick works too and overrides it). In the editor: Ctrl-Space = autocomplete.</p>
+    </div>
+  </div>
+
+ </div>
+</div>
+
+<footer class="botbar">
+  <span><span class="bk">KOMMANDER</span><span class="sh">SHELL</span></span>
+  <span id="footTip">—</span>
+  <span class="fright" id="footMeta"></span>
+</footer>
+
+<div id="focus-overlay" hidden>
+  <div class="fmain">
+    <div class="fpane fprev fit" id="fprev"></div>
+    <div class="fsplit" id="fsplit"></div>
+    <div class="fpane fcode" id="fcode"></div>
+  </div>
+  <div class="fbar">
+    <span class="segs" id="fsizeSegs">
+      <label><input type="radio" name="fsize" value="fit" checked><span>FILL</span></label>
+      <label><input type="radio" name="fsize" value="1x"><span>PSP RES</span></label>
+    </span>
+    <button id="frun" class="primary">▶ RUN</button>
+    <button id="frestart">↻ RESTART</button>
+    <button id="fsave">SAVE</button>
+    <label class="toggle" style="margin-left:4px"><input type="checkbox" id="fcrt"> CRT</label>
+    <span class="fspacer"></span>
+    <button id="fexit">⛶ EXIT</button>
+  </div>
+</div>
+
+<script src="vendor/fengari-web.js"></script>
+<script src="font.js"></script>
+<script src="kom.js"></script>
+<script src="apps.js"></script>
+<script src="vendor/codemirror/codemirror.min.js"></script>
+<script src="vendor/codemirror/lua.min.js"></script>
+<script src="vendor/codemirror/show-hint.min.js"></script>
+<script src="vendor/codemirror/matchbrackets.min.js"></script>
+<script src="vendor/codemirror/closebrackets.min.js"></script>
+<script src="vendor/codemirror/active-line.min.js"></script>
+<script>
+(function(){
+  const $ = id => document.getElementById(id);
+  let current = null, dirty = false, liveTimer = 0;
+  const setStatus = (msg, kind)=>{ const el=$('runtitle'); el.textContent = msg; el.className = kind || ''; el.title = msg; };
+
+  KomSim.init($('screen'));
+  KomSim.onStop = reason => { if (reason && reason !== 'HOME') setStatus(reason, 'err'); };
+
+  // ---------- settings (read before CM init for the wrap option) ----------
+  const LS = { saved:'kom_saved_v1', revs:'kom_revs_v1', settings:'kom_settings_v1' };
+  const defSettings = { ui:'dark', clock:'24', glow:'soft', wrap:true, fullPreview:false };
+  function getSettings(){ try { return Object.assign({}, defSettings, JSON.parse(localStorage.getItem(LS.settings)||'{}')); } catch(e){ return Object.assign({}, defSettings); } }
+  const GLOW = { none:'none', soft:'0 16px 44px -22px var(--red)' };
+  let settings = getSettings();
+  let clock12 = settings.clock==='12';
+
+  // ---------- CodeMirror editor ----------
+  const KOM_MEMBERS = ['clear','rect','frame','pset','line','tri','circle','text','textw','rgb','btn','btnp','analog','time','sfx','tone','sprite','image','imageb64','imgdraw','imgw','imgh','sound','soundb64','play','font','loadfont','loadfontb64','bmtext','bmtextw','save','load','W','H','col'];
+  const COL_MEMBERS = ['bg','accent','hi','dark','text','grey'];
+  const LUA_WORDS = ['and','break','do','else','elseif','end','false','for','function','if','in','local','nil','not','or','repeat','return','then','true','until','while','math','string','table','pairs','ipairs','tostring','tonumber','type','select','floor','ceil','random','sin','cos','sqrt','abs','min','max','insert','remove','kom'];
+  function komHint(cm){
+    const cur = cm.getCursor(), line = cm.getLine(cur.line);
+    let start = cur.ch; while (start>0 && /[\w.]/.test(line.charAt(start-1))) start--;
+    const token = line.slice(start, cur.ch);
+    const from = CodeMirror.Pos(cur.line, start), to = CodeMirror.Pos(cur.line, cur.ch);
+    if (/^kom\.col\.?\w*$/.test(token)) { const sub = token.split('.')[2] || ''; return { list: COL_MEMBERS.filter(w=>w.startsWith(sub)).map(w=>'kom.col.'+w), from, to }; }
+    if (/^kom\.?\w*$/.test(token)) { const sub = token.indexOf('.')>=0 ? token.split('.')[1] : ''; return { list: KOM_MEMBERS.filter(w=>w.startsWith(sub)).map(w=>'kom.'+w), from, to }; }
+    if (!token) return null;
+    const lc = token.toLowerCase();
+    return { list: LUA_WORDS.filter(w=>w.startsWith(lc) && w!==token), from, to };
+  }
+  const doHint = cm => cm.showHint({ hint: komHint, completeSingle:false });
+  const cm = CodeMirror.fromTextArea($('code'), {
+    mode:'lua', theme:'kom', lineNumbers:true, indentUnit:2, tabSize:2, smartIndent:true,
+    lineWrapping: settings.wrap !== false, matchBrackets:true, autoCloseBrackets:true, styleActiveLine:true,
+    extraKeys:{ 'Ctrl-Space':doHint, 'Tab': c=>c.replaceSelection('  ') }
+  });
+  cm.on('inputRead', (c, ch)=>{ if (ch.text[0] && /[\w.]/.test(ch.text[0])) doHint(c); });
+  let activeFile = 'main.lua', switchingFile = false;
+  const fileSelect = document.createElement('select'); fileSelect.id = 'sourceFile';
+  fileSelect.title = 'SOURCE FILE'; fileSelect.setAttribute('aria-label','Source file');
+  cm.getWrapperElement().before(fileSelect);
+  const getCode = ()=> cm.getValue();
+  const setCode = v => cm.setValue(v || '');
+  function syncSource(){
+    if (!current || switchingFile) return;
+    if (activeFile === 'main.lua') current.code = getCode();
+    else current.fs[activeFile] = {text:getCode()};
+  }
+  function snapshot(){ return JSON.stringify([current.code, current.fs]); }
+  function listSources(){
+    fileSelect.replaceChildren();
+    for(const name of ['main.lua', ...Object.keys(current.fs).filter(n=>/\.lua$/.test(n)).sort()]){
+      const option=document.createElement('option'); option.value=option.textContent=name; fileSelect.appendChild(option);
+    }
+    fileSelect.value=activeFile;
+  }
+  fileSelect.onchange=()=>{
+    syncSource(); activeFile=fileSelect.value; switchingFile=true;
+    setCode(activeFile==='main.lua'?current.code:current.fs[activeFile].text); switchingFile=false;
+  };
+
+  function tickClock(){ const d=new Date(); let h=d.getHours(),ap=''; if(clock12){ap=h>=12?' PM':' AM';h=h%12;if(h===0)h=12;} const p=n=>(n<10?'0':'')+n; $('clock').textContent = p(h)+':'+p(d.getMinutes())+ap; }
+  tickClock(); setInterval(tickClock, 15000);
+
+  function applySettings(s){
+    document.body.classList.toggle('light', s.ui==='light');
+    document.body.classList.toggle('fullprev', !!s.fullPreview);
+    document.documentElement.style.setProperty('--glow', GLOW[s.glow] || GLOW.soft);
+    clock12 = s.clock==='12'; KomSim.setClock12(clock12); tickClock();
+    cm.setOption('lineWrapping', s.wrap !== false);
+  }
+  applySettings(settings);
+
+  // ---------- persistence helpers ----------
+  const getSaved = ()=>{ try { return JSON.parse(localStorage.getItem(LS.saved)||'{}'); } catch(e){ return {}; } };
+  const setSaved = o => localStorage.setItem(LS.saved, JSON.stringify(o));
+  const getRevs  = ()=>{ try { return JSON.parse(localStorage.getItem(LS.revs)||'[]'); } catch(e){ return []; } };
+  const setRevs  = a => localStorage.setItem(LS.revs, JSON.stringify(a));
+  const curMode = ()=>{ const r = document.querySelector('input[name=mode]:checked'); return r ? r.value : 'full'; };
+  function setDirty(d){ dirty = d; $('dirty').hidden = !d; $('revert').disabled = !(current && current.origin==='local'); }
+  const esc = s => String(s).replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+  const cap = s => String(s||'').replace(/\b\w/g, c=>c.toUpperCase());
+
+  function run(){
+    if (!current) return; syncSource(); current.mode = curMode();
+    if (/kom\.powder\b/.test(current.code)) { KomSim.run('function draw() kom.clear(kom.rgb(20,20,20)); kom.text(24,72,"PSP NATIVE ENGINE",kom.col.accent,2); kom.text(24,110,"EDIT AND DOWNLOAD SOURCE HERE",kom.col.text); kom.text(24,130,"RUN POWDERLAB ON YOUR PSP",kom.col.text); end', {id:'native-notice'}); setStatus('PSP native engine required — edit and download here; run PowderLab on PSP.', 'err'); return; }
+    setStatus('Running ' + (current.name || cap(current.id)), 'ok');
+    KomSim.run(current.code, { id: current.id, mode: current.mode, fs: current.fs || {} })
+      .then(()=>{ if (KomSim.err) setStatus('Lua error: ' + KomSim.err, 'err'); })
+      .catch(e=>setStatus('Error: ' + e, 'err'));
+  }
+  function load(app){
+    current = Object.assign({ fs:{}, kind:'lua', origin:'lua' }, app);
+    current.fs = JSON.parse(JSON.stringify(current.fs));
+    current.baseline = ((app.baseline != null) ? app.baseline : (app.code || '')).replace(/\r\n?/g, '\n');
+    activeFile='main.lua'; switchingFile=true; setCode(app.code || ''); switchingFile=false;
+    current.bundleBaseline=snapshot(); listSources();
+    clearTimeout(liveTimer);
+    // The shell renders every drawer app FULLSCREEN; `inset`/`window` in a header
+    // or app.json are ignored on the device (APP_SDK). An app declaring one used to
+    // switch the preview into a mode the hardware cannot produce, which is worse
+    // than useless -- it is a preview of something that will never happen. The old
+    // value is still read, and the radios still exist, so restoring the switch is
+    // deleting the `= 'full'` below and the style on the field.
+    let m = (app.mode || 'full').toLowerCase(); if (m === 'fullscreen') m = 'full';
+    m = 'full';
+    (document.querySelector('input[name=mode][value="'+m+'"]') || document.querySelector('input[name=mode][value="full"]')).checked = true;
+    setDirty(getCode() !== current.baseline); run();
+  }
+
+  // ---------- Local Apps ----------
+  const demos = window.KOM_DEMOS || [];
+  function buildList(){
+    const listEl = $('applist'); listEl.innerHTML = ''; const saved = getSaved();
+    demos.forEach((d,i)=>{
+      const edited = saved[d.id] != null;
+      const row = document.createElement('div'); row.className = 'appitem'; row.dataset.i = i;
+      const ico = document.createElement('div'); ico.className = 'ico';
+      if (d.icon){ const im = document.createElement('img'); im.src = d.icon; ico.appendChild(im); } else ico.textContent = (d.name||d.id||'?')[0].toUpperCase();
+      const meta = document.createElement('div'); meta.className = 'meta';
+      meta.innerHTML = '<div class="nm">'+ (edited?'<span class="star">●</span> ':'') + esc(d.name||d.id) +'</div><div class="tag">'+ (d.kind==='pkg'?'PKG':'LUA') +' · ' + d.mode + (/kom\.powder\b/.test(d.code)?' · PSP NATIVE ENGINE':'') + (edited?' · edited':'') + '</div>';
+      row.appendChild(ico); row.appendChild(meta);
+      row.onclick = ()=>selectLocal(i);
+      if (current && current.origin==='local' && current.id===d.id) row.classList.add('sel');
+      listEl.appendChild(row);
+    });
+  }
+  async function selectLocal(i){
+    const d = demos[i];
+    if (!(current && current.origin==='local' && current.id===d.id)){ if (!await guard()) return; }
+    const saved = getSaved(); const edit=saved[d.id];
+    const code = typeof edit==='string'?edit:(edit?edit.code:d.code);
+    load({ code, baseline:code, id:d.id, name:d.name, mode:d.mode, fs:(edit&&edit.fs)||d.fs||{}, kind:d.kind, origin:'local', original:d.code, originalFs:d.fs||{} });
+    buildList();
+  }
+
+  // ---------- revisions ----------
+  function buildRevs(){
+    const revs = getRevs(), wrap = $('revpanel'), el = $('revlist');
+    wrap.hidden = revs.length === 0; el.innerHTML = '';
+    revs.forEach((r,idx)=>{
+      const row = document.createElement('div'); row.className = 'appitem';
+      if (current && current.origin==='revision' && current.id===r.id) row.classList.add('sel');
+      const ico = document.createElement('div'); ico.className='ico'; ico.textContent = (r.name||'?')[0].toUpperCase();
+      const meta = document.createElement('div'); meta.className='meta';
+      meta.innerHTML = '<div class="nm">'+ esc(r.name) +'</div><div class="tag">from ' + esc(r.base) + ' · ' + r.mode + '</div>';
+      const del = document.createElement('div'); del.className='del'; del.textContent='×'; del.title='Delete revision';
+      del.onclick = e=>{ e.stopPropagation(); const a=getRevs(); a.splice(idx,1); setRevs(a); buildRevs(); };
+      row.appendChild(ico); row.appendChild(meta); row.appendChild(del);
+      row.onclick = async ()=>{ if (!await guard()) return; load({ code:r.code, baseline:r.code, id:r.id, name:r.name, mode:r.mode, fs:r.fs||{}, kind:r.kind||'lua', origin:'revision' }); buildList(); buildRevs(); };
+      el.appendChild(row);
+    });
+  }
+
+  // ---------- save actions ----------
+  function doSave(){
+    if (!current) return false; syncSource();
+    if (current.origin === 'revision'){ const revs=getRevs(), r=revs.find(x=>x.id===current.id); if (r){ r.code=current.code; r.fs=current.fs; setRevs(revs); } }
+    else if (current.origin === 'local'){ const s=getSaved(); s[current.id]={code:current.code,fs:current.fs}; setSaved(s); buildList(); }
+    else return doSaveAs();
+    current.baseline = current.code; current.bundleBaseline=snapshot(); setDirty(false); setStatus('Saved ' + (current.name || current.id), 'ok'); return true;
+  }
+  function doSaveAs(){
+    if (!current) return false;
+    syncSource();
+    const name = (window.prompt('Save as revision — name:', (current.id||'app').split('~')[0] + ' v2') || '').trim();
+    if (!name) return false;
+    const base = (current.id||'app').split('~')[0];
+    const rev = { id: base+'~'+name, base, name, mode:curMode(), fs:current.fs||{}, kind:current.kind||'lua', code:current.code, ts:Date.now() };
+    const revs = getRevs(); revs.push(rev); setRevs(revs);
+    load({ code:rev.code, baseline:rev.code, id:rev.id, mode:rev.mode, fs:rev.fs, kind:rev.kind, origin:'revision' });
+    buildList(); buildRevs(); setStatus('Saved revision: ' + name, 'ok'); return true;
+  }
+  // Stored ZIP, UTF-8 names, CRC32: no network library needed when opened offline.
+  function bundleZip(files){
+    const enc=new TextEncoder(), parts=[], directory=[]; let offset=0;
+    const crc=bytes=>{let c=0xffffffff;for(const b of bytes){c^=b;for(let k=0;k<8;k++)c=(c>>>1)^((c&1)?0xedb88320:0);}return (c^0xffffffff)>>>0;};
+    for(const [name,data] of files){
+      const n=enc.encode(name), b=typeof data==='string'?enc.encode(data):data, sum=crc(b);
+      const h=new Uint8Array(30+n.length), v=new DataView(h.buffer);
+      v.setUint32(0,0x04034b50,true);v.setUint16(4,20,true);v.setUint16(6,0x800,true);
+      v.setUint32(14,sum,true);v.setUint32(18,b.length,true);v.setUint32(22,b.length,true);v.setUint16(26,n.length,true);h.set(n,30);
+      const d=new Uint8Array(46+n.length), w=new DataView(d.buffer);
+      w.setUint32(0,0x02014b50,true);w.setUint16(4,20,true);w.setUint16(6,20,true);w.setUint16(8,0x800,true);
+      w.setUint32(16,sum,true);w.setUint32(20,b.length,true);w.setUint32(24,b.length,true);w.setUint16(28,n.length,true);w.setUint32(42,offset,true);d.set(n,46);
+      parts.push(h,b);directory.push(d);offset+=h.length+b.length;
+    }
+    const size=directory.reduce((s,d)=>s+d.length,0), end=new Uint8Array(22), e=new DataView(end.buffer);
+    e.setUint32(0,0x06054b50,true);e.setUint16(8,files.length,true);e.setUint16(10,files.length,true);e.setUint32(12,size,true);e.setUint32(16,offset,true);
+    return new Blob([...parts,...directory,end],{type:'application/zip'});
+  }
+  function doDownload(){
+    syncSource();
+    const bundle=current && (current.kind==='pkg'||Object.keys(current.fs).length>0);
+    const files=bundle?[['main.lua',current.code],['app.json',(current.fs['app.json']||{}).text||current.manifest||JSON.stringify({name:current.name||current.id})]]:[];
+    if(bundle) for(const [name,f] of Object.entries(current.fs)){
+      if(name==='app.json')continue;
+      if(typeof f.text==='string')files.push([name,f.text]);
+      else if(f.dataUrl)files.push([name,Uint8Array.from(atob(f.dataUrl.split(',')[1]),c=>c.charCodeAt(0))]);
+    }
+    const blob = bundle?bundleZip(files):new Blob([getCode()], { type:'text/plain' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+    a.download = ((current && current.id) || 'app').replace(/[~\/]/g,'_') + (bundle?'.zip':'.lua');
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
+  }
+  function doRevert(){ if (!current || current.origin!=='local') return;
+    current.code=current.original;current.fs=JSON.parse(JSON.stringify(current.originalFs||{}));activeFile='main.lua';
+    switchingFile=true;setCode(current.code);switchingFile=false;listSources();setDirty(snapshot()!==current.bundleBaseline);run(); }
+
+  function modal(html){
+    return new Promise(resolve=>{
+      const bg = document.createElement('div'); bg.className='modal-bg'; bg.innerHTML = '<div class="modal">'+html+'</div>';
+      document.body.appendChild(bg);
+      bg.addEventListener('click', e=>{ const a = e.target.getAttribute && e.target.getAttribute('data-a'); if (a){ bg.remove(); resolve(a); } else if (e.target===bg){ bg.remove(); resolve(null); } });
+    });
+  }
+  function guard(){
+    if (!dirty) return Promise.resolve(true);
+    return modal('<h3>UNSAVED CHANGES</h3><p>You have unsaved edits to <b>'+esc((current&&current.id)||'app')+'</b>. What would you like to do?</p><div class="mbtns">'
+      + '<button data-a="save" class="primary">Save Changes</button><button data-a="rev">Save As Revision</button><button data-a="discard">Discard</button><button data-a="cancel">Cancel</button></div>')
+      .then(a=>{ if (a==='save') return doSave(); if (a==='rev') return doSaveAs(); if (a==='discard') return true; return false; });
+  }
+
+  // ---------- editor events ----------
+  cm.on('change', ()=>{
+    if(switchingFile)return;
+    if (current) {syncSource();setDirty(snapshot() !== current.bundleBaseline);}
+    if (!$('liveChk').checked || !current) return;
+    clearTimeout(liveTimer); liveTimer = setTimeout(run, 350);
+  });
+  $('liveChk').addEventListener('change', e=>{ $('livedot').className = 'dot' + (e.target.checked?'':' off'); });
+  $('run').onclick = ()=>{ if (!current) current = { code:getCode(), id:'app', mode:curMode(), fs:{}, origin:'lua', baseline:'' }; run(); };
+  $('restart').onclick = run; $('save').onclick = doSave; $('saveAs').onclick = doSaveAs; $('download').onclick = doDownload; $('revert').onclick = doRevert;
+
+  // ---------- display + theme ----------
+  document.querySelectorAll('input[name=mode]').forEach(r=> r.addEventListener('change', ()=>{ if (current) run(); }));
+  $('crt').addEventListener('change', e=>{ KomSim.setCrt(e.target.checked); $('fcrt').checked = e.target.checked; });
+  $('gamepad').addEventListener('change', e=> KomSim.setGamepad(e.target.checked));
+
+  const PRESETS = [['RED',[255,42,42]],['AMBER',[255,150,30]],['GREEN',[70,255,90]],['CYAN',[60,215,255]],['VIOLET',[205,90,255]],['MONO',[235,235,235]]];
+  const hex = ([r,g,b])=> '#' + [r,g,b].map(x=>x.toString(16).padStart(2,'0')).join('');
+  function applyTheme(rgb){
+    KomSim.setTheme(rgb[0],rgb[1],rgb[2]); const t = KomSim.theme();
+    document.documentElement.style.setProperty('--red', t.accent);
+    document.documentElement.style.setProperty('--dim', t.dark);
+    $('custom').value = hex(rgb);
+    document.querySelectorAll('.sw').forEach(s=> s.classList.toggle('sel', s.dataset.hex === hex(rgb)));
+    KomSim.refreshThemeColors();   // apply to the running app live — no restart
+  }
+  const swEl = $('swatches');
+  PRESETS.forEach(([name,rgb])=>{ const s=document.createElement('div'); s.className='sw'; s.title=name; s.style.background=hex(rgb); s.dataset.hex=hex(rgb); s.onclick=()=>applyTheme(rgb); swEl.appendChild(s); });
+  $('custom').addEventListener('input', e=>{ const h=e.target.value; applyTheme([1,3,5].map(i=>parseInt(h.substr(i,2),16))); });
+  document.querySelector('.sw').classList.add('sel');
+
+  // ---------- settings modal ----------
+  function openSettings(){
+    if (document.querySelector('.modal-bg')) return;   // don't stack modals
+    const s = settings;
+    const seg = (name,val,opts)=> '<div class="segs">'+opts.map(o=>'<label><input type="radio" name="'+name+'" value="'+o[0]+'"'+(val===o[0]?' checked':'')+'><span>'+o[1]+'</span></label>').join('')+'</div>';
+    const bg = document.createElement('div'); bg.className='modal-bg';
+    bg.innerHTML = '<div class="modal"><h3>⚙ SETTINGS</h3>'
+      + '<div class="field"><label class="lbl">INTERFACE THEME</label>'+seg('ui',s.ui,[['dark','DARK'],['light','LIGHT']])+'</div>'
+      + '<div class="field"><label class="lbl">CLOCK</label>'+seg('clock',s.clock,[['24','24-HOUR'],['12','12-HOUR']])+'</div>'
+      + '<div class="field"><label class="lbl">PREVIEW GLOW</label>'+seg('glow',s.glow,[['none','NONE'],['soft','SOFT']])+'</div>'
+      + '<div class="field"><label class="toggle"><input type="checkbox" id="set-wrap"'+(s.wrap!==false?' checked':'')+'> Wrap long lines in the editor</label></div>'
+      + '<div class="field"><label class="toggle"><input type="checkbox" id="set-fullprev"'+(s.fullPreview?' checked':'')+'> Full-width preview in stacked view</label></div>'
+      + '<div class="mbtns"><button data-a="close" class="primary">DONE</button></div></div>';
+    document.body.appendChild(bg);
+    const apply = ()=>{
+      const get = n => { const r = bg.querySelector('input[name='+n+']:checked'); return r ? r.value : s[n]; };
+      settings = { ui:get('ui'), clock:get('clock'), glow:get('glow'), wrap: bg.querySelector('#set-wrap').checked, fullPreview: bg.querySelector('#set-fullprev').checked };
+      localStorage.setItem(LS.settings, JSON.stringify(settings)); applySettings(settings);
+    };
+    bg.addEventListener('change', apply);
+    bg.addEventListener('click', e=>{ const a=e.target.getAttribute&&e.target.getAttribute('data-a'); if (a==='close' || e.target===bg){ apply(); bg.remove(); } });
+  }
+  $('settingsBtn').onclick = openSettings;
+
+  // ---------- button remapping ----------
+  const BUTTONS = [['UP','D-pad ↑'],['DOWN','D-pad ↓'],['LEFT','D-pad ←'],['RIGHT','D-pad →'],['X','✕ Cross'],['O','◯ Circle'],['SQUARE','▢ Square'],['TRIANGLE','△ Triangle'],['L','L'],['R','R'],['START','START'],['SELECT','SELECT']];
+  function keyLabel(code){
+    if (!code) return '—';
+    if (/^Key([A-Z])$/.test(code)) return RegExp.$1;
+    if (/^Digit(\d)$/.test(code)) return RegExp.$1;
+    if (code==='ArrowUp') return '↑'; if (code==='ArrowDown') return '↓'; if (code==='ArrowLeft') return '←'; if (code==='ArrowRight') return '→';
+    if (code==='Space') return 'Space'; if (code==='Enter') return 'Enter';
+    if (code==='ShiftRight') return 'R-Shift'; if (code==='ShiftLeft') return 'L-Shift';
+    if (code.indexOf('Shift')===0) return 'Shift'; if (code.indexOf('Control')===0) return 'Ctrl';
+    return code.replace(/^Key|^Digit/,'');
+  }
+  let keymap = (()=>{ try { return Object.assign(KomSim.defaultKeymap(), JSON.parse(localStorage.getItem('kom_keymap_v1')||'{}')); } catch(e){ return KomSim.defaultKeymap(); } })();
+  function applyKeymap(){ KomSim.setKeymap(keymap); localStorage.setItem('kom_keymap_v1', JSON.stringify(keymap)); renderKeys(); }
+  function renderKeys(){
+    const t = $('keysTable'); t.innerHTML = '';
+    BUTTONS.forEach(([b,lbl])=>{ const tr=document.createElement('tr'); tr.innerHTML='<td>'+keyLabel(keymap[b])+'</td><td>'+lbl+'</td>'; t.appendChild(tr); });
+  }
+  KomSim.setKeymap(keymap); renderKeys();
+  $('remapReset').onclick = ()=>{ keymap = KomSim.defaultKeymap(); applyKeymap(); };
+  function openRemap(){
+    if (document.querySelector('.modal-bg')) return;   // don't stack modals
+    const bg = document.createElement('div'); bg.className='modal-bg';
+    const rows = BUTTONS.map(([b,lbl])=>'<div class="field" style="display:flex;align-items:center;gap:10px;margin:5px 0"><span style="flex:1;color:var(--grey)">'+lbl+'</span><button class="rk" data-b="'+b+'" style="min-width:90px">'+keyLabel(keymap[b])+'</button></div>').join('');
+    bg.innerHTML = '<div class="modal"><h3>⌨ REMAP KEYS</h3><p class="note" style="margin-bottom:10px">Click a button, then press a key. Esc cancels a binding. (HOME/quit stays on the browser Esc.)</p>'
+      + rows + '<div class="mbtns"><button data-a="reset">Reset defaults</button><button data-a="close" class="primary">Done</button></div></div>';
+    document.body.appendChild(bg);
+    let listening = null;
+    const onKey = e=>{
+      if (!listening) return;
+      e.preventDefault(); e.stopImmediatePropagation();
+      if (e.code !== 'Escape'){
+        for (const k in keymap) if (keymap[k]===e.code) keymap[k]=null;   // unbind any duplicate
+        keymap[listening.dataset.b] = e.code;
+        applyKeymap();
+      }
+      listening.textContent = keyLabel(keymap[listening.dataset.b]); listening.classList.remove('primary');
+      bg.querySelectorAll('.rk').forEach(x=> x.textContent = keyLabel(keymap[x.dataset.b]));
+      listening = null;
+    };
+    window.addEventListener('keydown', onKey, true);
+    bg.addEventListener('click', e=>{
+      const rk = e.target.closest && e.target.closest('.rk');
+      if (rk){ if (listening) listening.classList.remove('primary'); listening = rk; rk.textContent='press a key…'; rk.classList.add('primary'); return; }
+      const a = e.target.getAttribute && e.target.getAttribute('data-a');
+      if (a==='reset'){ keymap = KomSim.defaultKeymap(); applyKeymap(); bg.querySelectorAll('.rk').forEach(x=> x.textContent = keyLabel(keymap[x.dataset.b])); return; }
+      if (a==='close' || e.target===bg){ window.removeEventListener('keydown', onKey, true); bg.remove(); }
+    });
+  }
+  $('remapBtn').onclick = openRemap;
+
+  // ---------- focus (fullscreen split) editor ----------
+  const wrap = cm.getWrapperElement();
+  const slot = document.createElement('div'); slot.className = 'cmslot';
+  wrap.parentNode.insertBefore(slot, wrap); slot.appendChild(wrap); cm.refresh();
+  const screenHome = { p:$('screen').parentNode, next:$('screen').nextSibling };
+  const codeHome   = { p:slot, next:null };
+  let fsize = 'fit';
+  function applyFocusSize(){
+    const cv = $('screen'), fp = $('fprev');
+    fp.classList.toggle('fit', fsize==='fit');
+    if (fsize==='1x'){ cv.style.width='480px'; cv.style.height='272px'; }   // PSP native, 1:1 sharp
+    else { cv.style.width=''; cv.style.height=''; }                         // FILL: pixelated contain
+  }
+  function enterFocus(){ $('fprev').appendChild($('screen')); $('fcode').appendChild(wrap); $('focus-overlay').hidden=false; document.body.style.overflow='hidden'; applyFocusSize(); cm.refresh(); }
+  function exitFocus(){ const cv=$('screen'); cv.style.width=''; cv.style.height=''; screenHome.p.insertBefore(cv, screenHome.next); codeHome.p.insertBefore(wrap, codeHome.next); $('focus-overlay').hidden=true; document.body.style.overflow=''; cm.refresh(); }
+  function toggleFocus(){ if ($('focus-overlay').hidden) enterFocus(); else exitFocus(); }
+  $('focus').onclick = enterFocus; $('fexit').onclick = exitFocus;
+  $('focus').title = 'Fullscreen editor (Alt+Enter)';
+  cm.setOption('extraKeys', Object.assign({}, cm.getOption('extraKeys'), { 'Alt-Enter': ()=>toggleFocus() }));
+  window.addEventListener('keydown', e=>{ if (e.altKey && e.key==='Enter'){ e.preventDefault(); toggleFocus(); } });
+  $('frun').onclick = run; $('frestart').onclick = run; $('fsave').onclick = doSave;
+  $('fcrt').addEventListener('change', e=>{ KomSim.setCrt(e.target.checked); $('crt').checked = e.target.checked; });
+  document.querySelectorAll('input[name=fsize]').forEach(r=> r.addEventListener('change', e=>{ fsize=e.target.value; applyFocusSize(); }));
+  let dragging = false;
+  $('fsplit').addEventListener('mousedown', ()=>{ dragging=true; document.body.style.userSelect='none'; });
+  window.addEventListener('mouseup', ()=>{ if (dragging){ dragging=false; document.body.style.userSelect=''; cm.refresh(); } });
+  window.addEventListener('mousemove', e=>{ if (!dragging) return; const r=$('focus-overlay').querySelector('.fmain').getBoundingClientRect(); let pct=((e.clientX-r.left)/r.width)*100; pct=Math.max(20,Math.min(80,pct)); $('fprev').style.flexBasis=pct+'%'; });
+  document.addEventListener('keydown', e=>{ if (e.key==='Escape' && !$('focus-overlay').hidden) exitFocus(); });
+
+  // ---------- file / bundle loading ----------
+  const readText = file => new Promise(res=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.readAsText(file); });
+  const readData = file => new Promise(res=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.readAsDataURL(file); });
+  async function loadFiles(fileList){
+    const arr = [...fileList]; if (!arr.length) return; if (!await guard()) return;
+    const luaFile = arr.find(f=>/(^|\/)main\.lua$/i.test(f.webkitRelativePath||f.name)) || arr.find(f=>/\.lua$/i.test(f.name));
+    if (!luaFile){ setStatus('No .lua found in the dropped files.', 'err'); return; }
+    const code = await readText(luaFile);
+    let mode=null, name=luaFile.name, kind = arr.length>1 ? 'pkg':'lua';
+    const ajFile = arr.find(f=>/app\.json$/i.test(f.name));
+    if (ajFile){ try { const j=JSON.parse(await readText(ajFile)); if (j.display) mode=j.display.toLowerCase(); if (j.name) name=j.name; } catch(e){} }
+    const fsMap = {}, entryPath=luaFile.webkitRelativePath||luaFile.name, root=entryPath.slice(0,entryPath.lastIndexOf('/')+1);
+    if(ajFile)fsMap['app.json']={text:await readText(ajFile)};
+    for (const f of arr){
+      if (f===luaFile || f===ajFile) continue;
+      const full=f.webkitRelativePath||f.name;if(!full.startsWith(root))continue;
+      const relative=full.slice(root.length);
+      fsMap[relative] = /\.lua$/i.test(relative)?{text:await readText(f)}:{dataUrl:await readData(f)};
+    }
+    load({ code, baseline:code, id:(name||'app').replace(/\.lua$/i,''), name:(name||'app').replace(/\.lua$/i,''), mode, fs:fsMap, manifest:ajFile?await readText(ajFile):null, kind, origin:'file' });
+    buildList(); buildRevs();
+  }
+  $('pickFile').onclick = ()=>$('file').click(); $('pickDir').onclick = ()=>$('dir').click();
+  $('file').onchange = e=>loadFiles(e.target.files); $('dir').onchange = e=>loadFiles(e.target.files);
+  const drop = $('drop');
+  ['dragenter','dragover'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('hover');}));
+  ['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('hover');}));
+  drop.addEventListener('drop', e=>{ const items=e.dataTransfer.files; if (items&&items.length) loadFiles(items); });
+
+  // ---------- footer ticker ----------
+  $('footMeta').textContent = demos.length + ' APPS · LUA 5.3 · FENGARI · 480×272';
+  const TIPS = [
+    'TIP: edit the code — <b>Live Reload</b> runs it as you type.',
+    'TIP: press <b>Ctrl-Space</b> in the editor for kom API autocomplete.',
+    'TIP: <b>INSET</b> render mode frames your app with the real PSP chrome.',
+    'TIP: <b>SAVE AS…</b> keeps named revisions; <b>DOWNLOAD</b> writes the .lua to disk.',
+    'TIP: <b>⛶ FOCUS</b> gives a resizable 50/50 split with PSP 1× / 4× preview.',
+    'TIP: the <b>Theme</b> picker re-derives the whole palette, like the PSP menu.',
+    'TIP: drop a <b>.lua</b> or a bundle folder to run your own app.',
+    'TIP: toggle the <b>CRT</b> effect to preview scanlines + vignette, like the EBOOT.'
+  ];
+  let tipI = 0; const showTip = ()=>{ $('footTip').innerHTML = TIPS[tipI % TIPS.length]; tipI++; };
+  showTip(); setInterval(showTip, 7000);
+
+  // ---------- init ----------
+  buildList(); buildRevs();
+  selectLocal(Math.max(0, demos.findIndex(d=>d.id==='snake')));
+})();
+</script>
+</body>
+</html>
